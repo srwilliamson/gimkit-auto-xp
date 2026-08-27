@@ -1,16 +1,14 @@
 // Gimkit Don't Look Down console helper
-// Paste on https://www.gimkit.com/kits (logged in) or already in a DLD game.
-// Dock DevTools however you want. Stop with: window.__gkh.stop()
+// Paste on the lobby Start game screen (after you already picked DLD and set 59 min).
+// Do NOT paste on /kits — Play Live redirects and kills the script.
+// Stop with: window.__gkh.stop()
 (async function () {
   if (window.__gkh && window.__gkh.stop) window.__gkh.stop();
 
   var OPTIONS = {
-    kitIndex: 0,                 // 0 = first Play Live on /kits
-    gameMode: "Don't Look Down",
-    sessionMinutes: 59,          // Gimkit max; 60 gets rejected
+    sessionMinutes: 59,          // how long to auto-play after Start game
     actionDelayMs: 1500,         // pause between in-game clicks
-    verifyScans: 2,              // same correct answer seen this many times before click
-    setupStepMs: 1800
+    verifyScans: 2               // same correct answer seen this many times before click
   };
 
   function sleep(ms) {
@@ -428,101 +426,49 @@
     sniff: sniff
   };
 
+  function onLobby() {
+    var b = bodyText(4000);
+    return /start game|start hosting/i.test(b) && !inActiveGame();
+  }
+
   async function setup() {
-    if (inActiveGame() && findTiles().length >= 2) {
-      log("already in a question — skipping setup");
-      return true;
-    }
-    if (inActiveGame()) {
-      log("already in game — skipping kit setup");
+    if (inActiveGame() || findTiles().length >= 2) {
+      log("already in game — starting auto-play");
       return true;
     }
     if (looksLoggedOut()) {
-      log("not logged in. Sign into Gimkit, open /kits, paste again.");
+      log("not logged in. Sign in, set up DLD, paste on the Start game lobby.");
+      return false;
+    }
+    if (/\/kits/i.test(location.pathname) || /play live/i.test(bodyText(2000))) {
+      log("you are on kits. Play Live redirects and kills this paste.");
+      log("set up Don't Look Down yourself, wait until the lobby shows Start game, then paste there.");
+      return false;
+    }
+    if (onSettings()) {
+      log("this is still the settings screen. Set duration to 59, click Continue, then paste on Start game.");
+      return false;
+    }
+    if (!onLobby() && !/start game|start hosting|go!/i.test(bodyText(4000))) {
+      log("no Start game button. Open the DLD lobby (Start game visible), then paste.");
       return false;
     }
 
-    if (/\/kits/i.test(location.pathname) || /play live/i.test(bodyText(3000))) {
-      log("step 1/8: Play Live on kit #" + (OPTIONS.kitIndex + 1));
-      var plays = [];
-      var btns = document.querySelectorAll("button, [role='button'], a");
-      for (var i = 0; i < btns.length; i++) {
-        if (/play live/i.test(txt(btns[i])) && visible(btns[i])) plays.push(btns[i]);
-      }
-      if (!plays[OPTIONS.kitIndex]) {
-        log("no Play Live button. Open https://www.gimkit.com/kits logged in.");
-        return false;
-      }
-      reactClick(plays[OPTIONS.kitIndex]);
-      log("clicked Play Live");
-      await sleep(OPTIONS.setupStepMs);
+    log("lobby — clicking Start game");
+    for (var s = 0; s < 10; s++) {
+      if (inActiveGame() || findTiles().length >= 2) break;
+      var clicked =
+        clickByRe(/^(start game|start hosting|go!)$/i, { maxLen: 24, minW: 50, minH: 20, exactOwn: true }) ||
+        clickByRe(/start game|start hosting/i, { maxLen: 24, minW: 50, minH: 20 });
+      if (clicked) log("clicked Start game");
+      await sleep(1200);
     }
-
-    log("step 2/8: Don't Look Down");
-    if (!/don'?t look down/i.test(bodyText(4000)) && !onSettings() && !inActiveGame()) {
+    for (var w = 0; w < 25; w++) {
+      if (inActiveGame() || findTiles().length >= 2) break;
       await sleep(800);
     }
-    if (/don'?t look down/i.test(bodyText(4000)) && !onSettings()) {
-      var tiles = [];
-      var nodes = document.querySelectorAll("div, button, [role='button']");
-      for (var j = 0; j < nodes.length; j++) {
-        var t = txt(nodes[j]);
-        if (!/don'?t look down/i.test(t)) continue;
-        if (/climb your way|learn more|duration|complexity/i.test(t)) continue;
-        if (!visible(nodes[j])) continue;
-        tiles.push({ el: nodes[j], len: t.length });
-      }
-      tiles.sort(function (a, b) { return a.len - b.len; });
-      if (tiles[0]) {
-        reactClick(tiles[0].el);
-        log("selected Don't Look Down");
-        await sleep(OPTIONS.setupStepMs);
-      }
-      log("step 3/8: Continue after mode");
-      clickContinue();
-      await sleep(OPTIONS.setupStepMs);
-    }
-
-    log("step 5/8: Game Duration = " + OPTIONS.sessionMinutes);
-    for (var attempt = 0; attempt < 4; attempt++) {
-      if (onSettings() || readDuration() != null) {
-        var ok = setDuration(OPTIONS.sessionMinutes);
-        await sleep(1200);
-        var shown = readDuration();
-        log("duration field shows " + (shown == null ? "?" : shown) + " (set=" + ok + ")");
-        if (shown != null && shown >= OPTIONS.sessionMinutes - 1) break;
-      } else {
-        clickContinue();
-        await sleep(OPTIONS.setupStepMs);
-      }
-    }
-    var shown2 = readDuration();
-    if (shown2 == null || shown2 < OPTIONS.sessionMinutes - 1) {
-      log("could not verify " + OPTIONS.sessionMinutes + " min. Set it yourself, then paste again on Start game.");
-      return false;
-    }
-    log("duration confirmed: " + shown2 + " min");
-
-    log("step 6/8: Continue from settings");
-    clickContinue();
-    await sleep(OPTIONS.setupStepMs);
-
-    log("step 7/8: Start game");
-    for (var s = 0; s < 8; s++) {
-      if (inActiveGame()) break;
-      clickByRe(/^(start game|start hosting|go!|play game|start solo)$/i, { maxLen: 24, minW: 50, minH: 20, exactOwn: true });
-      if (!inActiveGame()) clickByRe(/start game|start hosting|play game|start now|enter game/i, { maxLen: 24 });
-      await sleep(1500);
-    }
-    if (!inActiveGame()) {
-      log("waiting for Height HUD / Answer Questions…");
-      for (var w = 0; w < 20; w++) {
-        if (inActiveGame() || findTiles().length >= 2) break;
-        await sleep(800);
-      }
-    }
     if (!inActiveGame() && findTiles().length < 2) {
-      log("never reached the game. Stay on the host/play screen and paste again.");
+      log("Start game did not stay on this page. If a new tab opened, paste this script there. If you see Height / Answer Questions, paste again on that screen.");
       return false;
     }
     log("in game");
@@ -567,7 +513,7 @@
 
   log("console helper on " + location.pathname);
   if (!/gimkit\.com/i.test(location.hostname)) {
-    log("open gimkit.com first (kits page or a live DLD game), then paste again.");
+    log("open the Gimkit DLD lobby (Start game screen), then paste again.");
     return;
   }
   var ok = await setup();

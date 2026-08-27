@@ -2,42 +2,43 @@
 
 A copy-paste script for **solo Don't Look Down**. No Playwright, no extension.
 
-Paste it on Gimkit. It picks your kit, sets **Game Duration to 59 minutes** (Gimkit's max; 60 gets rejected), starts the game, then answers questions for that session.
+Paste it on the **lobby Start game screen**. It clicks Start, then answers questions for 59 minutes.
 
-## 1. Sign in
+Do **not** paste on `/kits`. Play Live opens a new page and kills the script.
 
-Be logged into Gimkit in Chrome or Edge.
+## 1. Set up the game yourself
 
-## 2. Open kits (or an already-running game)
+1. Sign into Gimkit
+2. Open your kit → **Play Live** → **Don't Look Down**
+3. Set **Game Duration to 59 minutes** (Gimkit's max; 60 gets rejected)
+4. Continue until you are on the **lobby** with a **Start game** button
 
-Best: [https://www.gimkit.com/kits](https://www.gimkit.com/kits)
+Leave the console closed until this screen. Duration and mode have to be done before you paste.
 
-You can also paste after you already started Don't Look Down. Setup is skipped if the Height HUD or **Answer Questions** is on screen.
+## 2. Open the console on that lobby
 
-## 3. Open the console
+Stay on the Start game screen.
 
 - Windows: `F12` or `Ctrl+Shift+J`
 - Mac: `Cmd+Option+J`
 
-## 4. Paste and run
+## 3. Paste and run
 
 1. Open [`gimkit.js`](./gimkit.js) on GitHub
 2. Click **Raw**, Select All, Copy
 3. Click the console, paste, Enter
 
-You should see `[gimkit] console helper on /kits` then the setup steps.
+You should see `[gimkit] lobby — clicking Start game`, then `[gimkit] in game`.
 
 Stop with `window.__gkh.stop()` or by refreshing.
 
-## What it does
+If you already started and you see Height / **Answer Questions**, you can paste there too. It skips Start and just auto-plays.
 
-1. Clicks **Play Live** on kit #1 (change `kitIndex` for a different kit)
-2. Clicks **Don't Look Down**
-3. Clicks **Continue**
-4. Sets **Game Duration** to **59**, waits, and checks the field really shows 59 before continuing
-5. Clicks **Start game**
-6. Starts the 59-minute timer only after the game is actually up
-7. Every ~1.5s: open **Answer Questions**, read the correct choice from sniffed `isCorrect` / "This is Correct" / page scripts, click it, then click **Continue** so it does not get stuck on feedback
+## What it does from the lobby
+
+1. Clicks **Start game**
+2. Starts the 59-minute timer only after Height / Answer Questions is up
+3. Every ~1.5s: open **Answer Questions**, pick the correct choice from sniffed `isCorrect` / "This is Correct" / page scripts, click it, then click **Continue** so it does not get stuck on feedback
 
 It does not count a click as success until answer tiles actually show up.
 
@@ -45,21 +46,18 @@ It does not count a click as success until answer tiles actually show up.
 
 | Option | Default | When to change it |
 | --- | --- | --- |
-| `kitIndex` | `0` | `0` is the first Play Live on /kits. Use `1` for the second kit, and so on. |
-| `gameMode` | `Don't Look Down` | Leave this unless Gimkit renamed the mode. |
-| `sessionMinutes` | `59` | Gimkit max. Do not set 60. |
+| `sessionMinutes` | `59` | How long to auto-play after the game starts. |
 | `actionDelayMs` | `1500` | Raise if clicks get ignored. Lower if it feels slow. |
 | `verifyScans` | `2` | How many times the same correct answer must show before it clicks. Raise if it guesses wrong. |
-| `setupStepMs` | `1800` | Pause between setup clicks. Raise if it skips Don't Look Down or duration. |
 
 ## Troubleshooting
 
 | What you see | What to do |
 | --- | --- |
-| `not logged in` | Sign into Gimkit, open /kits, paste again. |
-| `no Play Live button` | You are not on /kits, or kits have not loaded yet. Wait, refresh, paste again. |
-| `could not verify 59 min` | Set duration to 59 yourself, click Continue, paste on Start game. |
-| `never reached the game` | Finish Start game yourself, then paste once Height / Answer Questions is visible. |
+| `you are on kits` | Do not paste there. Finish setup, paste on Start game. |
+| `this is still the settings screen` | Set 59 min, Continue, then paste on Start game. |
+| `no Start game button` | You are not in the DLD lobby yet. Get to Start game, then paste. |
+| `Start game did not stay on this page` | A new tab opened. Paste the script in that tab's console. |
 | It opens Answer Questions but never picks | Wait a question or two so network sniff can cache `isCorrect`. |
 | Stuck on a checkmark / +Energy screen | It should hit Continue; if not, click Continue once and let it resume. |
 
