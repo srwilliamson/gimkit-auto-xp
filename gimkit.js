@@ -95,7 +95,7 @@
     return true;
   }
 
-  function clickMatching(re, opts) {
+  function collectMatches(re, opts) {
     opts = opts || {};
     var minW = opts.minW || 40;
     var minH = opts.minH || 18;
@@ -114,6 +114,11 @@
       hits.push({ el: el, t: t, area: r.width * r.height, top: r.top });
     }
     hits.sort(function (a, b) { return a.t.length - b.t.length || b.area - a.area; });
+    return hits;
+  }
+
+  function clickMatching(re, opts) {
+    var hits = collectMatches(re, opts);
     if (!hits.length) return false;
     reactClick(hits[0].el);
     return hits[0].t;
@@ -240,77 +245,20 @@
     return /game duration/i.test(b) || (/duration/i.test(b) && /\b\d{1,2}\s*min/i.test(b) && /continue/i.test(b));
   }
   function startGameVisible() {
-    return !!clickMatching(/^(start game|start hosting|go!)$/i, { minW: 50, minH: 20, exactOwn: true, dry: true });
+    var exact = collectMatches(/^(start game|start hosting|go!)$/i, {
+      minW: 50, minH: 20, exactOwn: true, maxLen: 24
+    });
+    if (exact.length) return true;
+    return collectMatches(/start game|start hosting/i, { minW: 50, minH: 20, maxLen: 24 }).length > 0;
+  }
+  function playLiveVisible() {
+    return collectMatches(/play live/i, { minW: 50, minH: 18, maxLen: 24 }).length > 0;
   }
 
   function clickByRe(re, extra) {
     var t = clickMatching(re, extra || { maxLen: 40, minW: 50, minH: 20 });
     if (t) log("clicked " + t);
     return !!t;
-  }
-
-  function setDuration(minutes) {
-    var mins = String(minutes);
-    function fire(el, val) {
-      el.focus && el.focus();
-      if ("value" in el) el.value = val;
-      else el.textContent = val;
-      el.dispatchEvent(new Event("input", { bubbles: true }));
-      el.dispatchEvent(new Event("change", { bubbles: true }));
-      el.dispatchEvent(new Event("blur", { bubbles: true }));
-    }
-    function nearDuration(el) {
-      var block = ((el.closest && (el.closest("div, section, form, label") || {}).innerText) ||
-        (el.parentElement && el.parentElement.innerText) || "").slice(0, 400);
-      return /game duration|time limit|duration/i.test(block);
-    }
-    var inputs = document.querySelectorAll("input, [role='spinbutton'], [contenteditable='true']");
-    for (var i = 0; i < inputs.length; i++) {
-      if (!nearDuration(inputs[i])) continue;
-      fire(inputs[i], mins);
-      var val = "value" in inputs[i] ? inputs[i].value : inputs[i].textContent;
-      if (String(val) === mins) return true;
-    }
-    var nodes = document.querySelectorAll("label, span, div, p, h4, h5");
-    for (var j = 0; j < nodes.length; j++) {
-      var t = (nodes[j].textContent || "").trim();
-      if (!/^game duration$/i.test(t) && !/game duration/i.test(t.slice(0, 40))) continue;
-      var root = nodes[j].closest("div, section, form") || nodes[j].parentElement;
-      var box = (root && root.querySelector("input, [role='spinbutton'], [contenteditable='true']")) ||
-        nodes[j].querySelector("input");
-      if (!box) continue;
-      fire(box, mins);
-      var v2 = "value" in box ? box.value : box.textContent;
-      if (String(v2) === mins) return true;
-    }
-    // stepper + until it reads 59
-    for (var c = 0; c < 70; c++) {
-      var shown = readDuration();
-      if (shown != null && shown >= minutes - 1) return true;
-      var plus = null;
-      var all = document.querySelectorAll("button, [role='button'], div, span");
-      for (var k = 0; k < all.length; k++) {
-        var el = all[k];
-        var ot = ownText(el) || txt(el);
-        if (!/^\+|plus|increase/i.test(ot) && ot !== "+") continue;
-        if (!nearDuration(el) && !/duration|min/i.test((el.parentElement && el.parentElement.innerText) || "")) continue;
-        if (!visible(el)) continue;
-        plus = el;
-        break;
-      }
-      if (!plus) break;
-      reactClick(plus);
-    }
-    return readDuration() != null && readDuration() >= minutes - 1;
-  }
-
-  function readDuration() {
-    var b = bodyText(4000);
-    var m = b.match(/game duration[^\n]{0,40}?(\d{1,3})\s*(?:min|minutes?)?/i) ||
-      b.match(/(\d{1,3})\s*min/i);
-    if (!m) return null;
-    var n = parseInt(m[1], 10);
-    return n >= 1 && n <= 60 ? n : null;
   }
 
   function findTiles() {
@@ -426,13 +374,12 @@
     sniff: sniff
   };
 
-  function onLobby() {
-    var b = bodyText(4000);
-    return /start game|start hosting/i.test(b) && !inActiveGame();
+  function inGameNow() {
+    return inActiveGame() || findTiles().length >= 2;
   }
 
   async function setup() {
-    if (inActiveGame() || findTiles().length >= 2) {
+    if (inGameNow()) {
       log("already in game — starting auto-play");
       return true;
     }
@@ -440,7 +387,7 @@
       log("not logged in. Sign in, set up DLD, paste on the Start game lobby.");
       return false;
     }
-    if (/\/kits/i.test(location.pathname) || /play live/i.test(bodyText(2000))) {
+    if (/\/kits/i.test(location.pathname) || (playLiveVisible() && !startGameVisible())) {
       log("you are on kits. Play Live redirects and kills this paste.");
       log("set up Don't Look Down yourself, wait until the lobby shows Start game, then paste there.");
       return false;
@@ -449,14 +396,14 @@
       log("this is still the settings screen. Set duration to 59, click Continue, then paste on Start game.");
       return false;
     }
-    if (!onLobby() && !/start game|start hosting|go!/i.test(bodyText(4000))) {
+    if (!startGameVisible()) {
       log("no Start game button. Open the DLD lobby (Start game visible), then paste.");
       return false;
     }
 
     log("lobby — clicking Start game");
     for (var s = 0; s < 10; s++) {
-      if (inActiveGame() || findTiles().length >= 2) break;
+      if (inGameNow()) break;
       var clicked =
         clickByRe(/^(start game|start hosting|go!)$/i, { maxLen: 24, minW: 50, minH: 20, exactOwn: true }) ||
         clickByRe(/start game|start hosting/i, { maxLen: 24, minW: 50, minH: 20 });
@@ -464,11 +411,11 @@
       await sleep(1200);
     }
     for (var w = 0; w < 25; w++) {
-      if (inActiveGame() || findTiles().length >= 2) break;
+      if (inGameNow()) break;
       await sleep(800);
     }
-    if (!inActiveGame() && findTiles().length < 2) {
-      log("Start game did not stay on this page. If a new tab opened, paste this script there. If you see Height / Answer Questions, paste again on that screen.");
+    if (!inGameNow()) {
+      log("Start game did not stay on this page. A new tab may have opened — paste this script in that tab. If you see Height / Answer Questions, paste again on that screen.");
       return false;
     }
     log("in game");
