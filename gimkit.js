@@ -8,7 +8,16 @@
   var OPTIONS = {
     sessionMinutes: 59,          // how long to auto-play after Start game
     actionDelayMs: 1500,         // pause between in-game clicks
-    verifyScans: 2               // same correct answer seen this many times before click
+    verifyScans: 2,              // same correct answer seen this many times before click
+    // Each item: exact question phrase + 1 correct + 3 wrong.
+    // Leave empty to use sniffed isCorrect. Copy wording exactly.
+    questions: [
+      // {
+      //   q: "What is 2 + 2?",
+      //   correct: "4",
+      //   wrong: ["3", "5", "22"]
+      // },
+    ]
   };
 
   function sleep(ms) {
@@ -95,7 +104,7 @@
     return true;
   }
 
-  function collectMatches(re, opts) {
+  function clickMatching(re, opts) {
     opts = opts || {};
     var minW = opts.minW || 40;
     var minH = opts.minH || 18;
@@ -114,11 +123,6 @@
       hits.push({ el: el, t: t, area: r.width * r.height, top: r.top });
     }
     hits.sort(function (a, b) { return a.t.length - b.t.length || b.area - a.area; });
-    return hits;
-  }
-
-  function clickMatching(re, opts) {
-    var hits = collectMatches(re, opts);
     if (!hits.length) return false;
     reactClick(hits[0].el);
     return hits[0].t;
@@ -245,20 +249,77 @@
     return /game duration/i.test(b) || (/duration/i.test(b) && /\b\d{1,2}\s*min/i.test(b) && /continue/i.test(b));
   }
   function startGameVisible() {
-    var exact = collectMatches(/^(start game|start hosting|go!)$/i, {
-      minW: 50, minH: 20, exactOwn: true, maxLen: 24
-    });
-    if (exact.length) return true;
-    return collectMatches(/start game|start hosting/i, { minW: 50, minH: 20, maxLen: 24 }).length > 0;
-  }
-  function playLiveVisible() {
-    return collectMatches(/play live/i, { minW: 50, minH: 18, maxLen: 24 }).length > 0;
+    return !!clickMatching(/^(start game|start hosting|go!)$/i, { minW: 50, minH: 20, exactOwn: true, dry: true });
   }
 
   function clickByRe(re, extra) {
     var t = clickMatching(re, extra || { maxLen: 40, minW: 50, minH: 20 });
     if (t) log("clicked " + t);
     return !!t;
+  }
+
+  function setDuration(minutes) {
+    var mins = String(minutes);
+    function fire(el, val) {
+      el.focus && el.focus();
+      if ("value" in el) el.value = val;
+      else el.textContent = val;
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+      el.dispatchEvent(new Event("blur", { bubbles: true }));
+    }
+    function nearDuration(el) {
+      var block = ((el.closest && (el.closest("div, section, form, label") || {}).innerText) ||
+        (el.parentElement && el.parentElement.innerText) || "").slice(0, 400);
+      return /game duration|time limit|duration/i.test(block);
+    }
+    var inputs = document.querySelectorAll("input, [role='spinbutton'], [contenteditable='true']");
+    for (var i = 0; i < inputs.length; i++) {
+      if (!nearDuration(inputs[i])) continue;
+      fire(inputs[i], mins);
+      var val = "value" in inputs[i] ? inputs[i].value : inputs[i].textContent;
+      if (String(val) === mins) return true;
+    }
+    var nodes = document.querySelectorAll("label, span, div, p, h4, h5");
+    for (var j = 0; j < nodes.length; j++) {
+      var t = (nodes[j].textContent || "").trim();
+      if (!/^game duration$/i.test(t) && !/game duration/i.test(t.slice(0, 40))) continue;
+      var root = nodes[j].closest("div, section, form") || nodes[j].parentElement;
+      var box = (root && root.querySelector("input, [role='spinbutton'], [contenteditable='true']")) ||
+        nodes[j].querySelector("input");
+      if (!box) continue;
+      fire(box, mins);
+      var v2 = "value" in box ? box.value : box.textContent;
+      if (String(v2) === mins) return true;
+    }
+    // stepper + until it reads 59
+    for (var c = 0; c < 70; c++) {
+      var shown = readDuration();
+      if (shown != null && shown >= minutes - 1) return true;
+      var plus = null;
+      var all = document.querySelectorAll("button, [role='button'], div, span");
+      for (var k = 0; k < all.length; k++) {
+        var el = all[k];
+        var ot = ownText(el) || txt(el);
+        if (!/^\+|plus|increase/i.test(ot) && ot !== "+") continue;
+        if (!nearDuration(el) && !/duration|min/i.test((el.parentElement && el.parentElement.innerText) || "")) continue;
+        if (!visible(el)) continue;
+        plus = el;
+        break;
+      }
+      if (!plus) break;
+      reactClick(plus);
+    }
+    return readDuration() != null && readDuration() >= minutes - 1;
+  }
+
+  function readDuration() {
+    var b = bodyText(4000);
+    var m = b.match(/game duration[^\n]{0,40}?(\d{1,3})\s*(?:min|minutes?)?/i) ||
+      b.match(/(\d{1,3})\s*min/i);
+    if (!m) return null;
+    var n = parseInt(m[1], 10);
+    return n >= 1 && n <= 60 ? n : null;
   }
 
   function findTiles() {
@@ -282,7 +343,67 @@
     return out;
   }
 
+  function parseBank() {
+    var out = [];
+    (OPTIONS.questions || []).forEach(function (item) {
+      if (!item) return;
+      if (Array.isArray(item)) {
+        out.push({
+          q: String(item[0] || ""),
+          correct: String(item[1] || ""),
+          wrong: [item[2], item[3], item[4]].map(function (w) { return String(w || ""); }).filter(Boolean)
+        });
+        return;
+      }
+      out.push({
+        q: String(item.q || item.question || ""),
+        correct: String(item.correct || item.answer || ""),
+        wrong: (item.wrong || item.incorrect || []).map(function (w) { return String(w || ""); }).filter(Boolean)
+      });
+    });
+    return out.filter(function (x) { return x.correct; });
+  }
+
+  function tileByExact(tiles, phrase) {
+    var k = norm(phrase);
+    if (!k) return null;
+    for (var i = 0; i < tiles.length; i++) {
+      if (norm(tiles[i].t) === k) return tiles[i];
+    }
+    return null;
+  }
+
+  function findFromBank(tiles) {
+    var bank = parseBank();
+    if (!bank.length || tiles.length < 2) return null;
+    var keys = tiles.map(function (x) { return norm(x.t); });
+    var page = norm(bodyText(2500));
+    var best = null;
+    var bestScore = 0;
+    for (var i = 0; i < bank.length; i++) {
+      var row = bank[i];
+      var correctTile = tileByExact(tiles, row.correct);
+      if (!correctTile) continue;
+      var wrongHits = 0;
+      row.wrong.forEach(function (w) {
+        if (tileByExact(tiles, w)) wrongHits += 1;
+      });
+      var qHit = row.q && page.indexOf(norm(row.q)) !== -1 ? 1 : 0;
+      // Prefer a full 1-correct + 3-wrong board, or exact question phrase on screen.
+      var score = 10 + wrongHits * 3 + qHit * 5;
+      if (wrongHits >= 3) score += 20;
+      if (wrongHits === 0 && !qHit) continue;
+      if (score > bestScore) {
+        bestScore = score;
+        best = { el: correctTile.el, t: correctTile.t, src: "bank" };
+      }
+    }
+    return best;
+  }
+
   function findCorrect(tiles) {
+    var bankHit = findFromBank(tiles);
+    if (bankHit) return bankHit;
     var methods = [];
     for (var i = 0; i < tiles.length; i++) {
       if (/not\s+correct|incorrect/i.test(tiles[i].t)) continue;
@@ -374,12 +495,13 @@
     sniff: sniff
   };
 
-  function inGameNow() {
-    return inActiveGame() || findTiles().length >= 2;
+  function onLobby() {
+    var b = bodyText(4000);
+    return /start game|start hosting/i.test(b) && !inActiveGame();
   }
 
   async function setup() {
-    if (inGameNow()) {
+    if (inActiveGame() || findTiles().length >= 2) {
       log("already in game — starting auto-play");
       return true;
     }
@@ -387,7 +509,7 @@
       log("not logged in. Sign in, set up DLD, paste on the Start game lobby.");
       return false;
     }
-    if (/\/kits/i.test(location.pathname) || (playLiveVisible() && !startGameVisible())) {
+    if (/\/kits/i.test(location.pathname) || /play live/i.test(bodyText(2000))) {
       log("you are on kits. Play Live redirects and kills this paste.");
       log("set up Don't Look Down yourself, wait until the lobby shows Start game, then paste there.");
       return false;
@@ -396,14 +518,14 @@
       log("this is still the settings screen. Set duration to 59, click Continue, then paste on Start game.");
       return false;
     }
-    if (!startGameVisible()) {
+    if (!onLobby() && !/start game|start hosting|go!/i.test(bodyText(4000))) {
       log("no Start game button. Open the DLD lobby (Start game visible), then paste.");
       return false;
     }
 
     log("lobby — clicking Start game");
     for (var s = 0; s < 10; s++) {
-      if (inGameNow()) break;
+      if (inActiveGame() || findTiles().length >= 2) break;
       var clicked =
         clickByRe(/^(start game|start hosting|go!)$/i, { maxLen: 24, minW: 50, minH: 20, exactOwn: true }) ||
         clickByRe(/start game|start hosting/i, { maxLen: 24, minW: 50, minH: 20 });
@@ -411,11 +533,11 @@
       await sleep(1200);
     }
     for (var w = 0; w < 25; w++) {
-      if (inGameNow()) break;
+      if (inActiveGame() || findTiles().length >= 2) break;
       await sleep(800);
     }
-    if (!inGameNow()) {
-      log("Start game did not stay on this page. A new tab may have opened — paste this script in that tab. If you see Height / Answer Questions, paste again on that screen.");
+    if (!inActiveGame() && findTiles().length < 2) {
+      log("Start game did not stay on this page. If a new tab opened, paste this script there. If you see Height / Answer Questions, paste again on that screen.");
       return false;
     }
     log("in game");
